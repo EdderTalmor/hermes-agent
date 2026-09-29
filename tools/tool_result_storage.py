@@ -334,14 +334,28 @@ def maybe_persist_tool_result(content: str, tool_name: str, tool_use_id: str, en
             "Full output could not be saved to sandbox.]")
 
 
+def _content_chars(content) -> int:
+    """Char size of tool content for budget accounting.
+
+    Multimodal results carry an OpenAI-style part list
+    ([{type:text,...},{type:image_url,...}]); only their text parts count.
+    """
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(len(part.get("text", "")) for part in content if isinstance(part, dict))
+    return 0
+
+
 def enforce_turn_budget(tool_messages: list[dict], env=None,
                         config: BudgetConfig = DEFAULT_BUDGET) -> list[dict]:
     """Layer 3: persist the largest non-persisted results first until the turn's aggregate is
     under budget. Mutates the list in-place and returns it."""
-    sizes = [len(msg.get("content", "")) for msg in tool_messages]
+    sizes = [_content_chars(msg.get("content", "")) for msg in tool_messages]
     total_size = sum(sizes)
     candidates = [(i, size) for i, size in enumerate(sizes)
-                  if PERSISTED_OUTPUT_TAG not in tool_messages[i].get("content", "")]
+                  if isinstance(tool_messages[i].get("content"), str)
+                  and PERSISTED_OUTPUT_TAG not in tool_messages[i].get("content", "")]
     if total_size <= config.turn_budget:
         return tool_messages
     for idx, size in sorted(candidates, key=lambda x: x[1], reverse=True):

@@ -17,6 +17,7 @@ from tools.tool_result_storage import (
     PERSISTED_OUTPUT_CLOSING_TAG,
     STORAGE_DIR,
     _build_persisted_message,
+    _content_chars,
     _pageable_text,
     _resolve_storage_dir,
     _safe_result_filename,
@@ -340,6 +341,25 @@ class TestEnforceTurnBudget:
     def test_empty_messages(self):
         result = enforce_turn_budget([], env=None, config=BudgetConfig(turn_budget=200_000))
         assert result == []
+
+    def test_multimodal_result_left_intact(self):
+        """Regression test for #126945: a multimodal (list content) tool message
+        plus enough string content to stay over budget must not crash — the list
+        entry is skipped, never passed to the spill writer."""
+        env = MagicMock()
+        env.execute.return_value = {"output": "", "returncode": 0}
+        multimodal = [
+            {"type": "text", "text": "screenshot summary"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+        ]
+        assert _content_chars(multimodal) == len("screenshot summary")
+        msgs = [{"role": "tool", "tool_call_id": "t-mm", "content": multimodal}]
+        msgs += [
+            {"role": "tool", "tool_call_id": f"t{i}", "content": "x" * 2_000}
+            for i in range(3)
+        ]
+        result = enforce_turn_budget(msgs, env=env, config=BudgetConfig(turn_budget=100))
+        assert result[0]["content"] == multimodal
 
 # ── Per-tool threshold integration ────────────────────────────────────
 
