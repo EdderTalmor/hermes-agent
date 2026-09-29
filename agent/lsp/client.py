@@ -563,7 +563,7 @@ class LSPClient:
             return
         diagnostics = params.get("diagnostics") or []
         version = params.get("version")
-        doc = self._docs.setdefault(uri_to_path(params["uri"]), _DocState(version=-1))
+        doc = self._track_doc(uri_to_path(params["uri"]))
         is_seed = self._seed_first_push and not doc.seed_seen
         doc.seed_seen = True
         doc.push = diagnostics if isinstance(diagnostics, list) else []
@@ -636,6 +636,30 @@ class LSPClient:
             if old.version >= 0:
                 await self._send_notification("textDocument/didClose", {"textDocument": {"uri": file_uri(old_path)}})
 
+    def _track_doc(self, path: str) -> "_DocState":
+        """Return the _DocState for ``path``, creating it under the MAX_TRACKED_FILES cap.
+
+        The sync push handler (_handle_publish_diagnostics) cannot await _evict_lru_docs,
+        so a fresh entry synchronously sheds only never-opened (version -1) entries, which
+        the server never mirrored and need no didClose. Opened docs are left for the async
+        evict in open_file's fresh-open branch.
+        """
+        doc = self._docs.get(path)
+        if doc is None:
+            doc = self._docs[path] = _DocState(version=-1)
+            self._enforce_unopened_docs_cap()
+        return doc
+
+    def _enforce_unopened_docs_cap(self) -> None:
+        """Drop oldest never-opened docs while over MAX_TRACKED_FILES (sync, no I/O)."""
+        while len(self._docs) > MAX_TRACKED_FILES:
+            for key, doc in self._docs.items():
+                if doc.version < 0:
+                    del self._docs[key]
+                    break
+            else:
+                return
+
     async def save_file(self, path: str) -> None:
         """Send didSave for ``path``.  Some linters re-scan only on save."""
         if self.is_running:
@@ -670,7 +694,7 @@ class LSPClient:
         for doc_path, report, tag in reports:
             items = report.get("items") if isinstance(report, dict) else None
             if isinstance(items, list):
-                d = self._docs.setdefault(doc_path, _DocState(version=-1))
+                d = self._track_doc(doc_path)
                 d.pull = items
                 d.pull_version = d.version if tag is None else tag
 
