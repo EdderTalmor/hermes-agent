@@ -252,6 +252,12 @@ let
           The working directory for the agent. The module also writes this
           path to config.yaml as `terminal.cwd`. The terminal and file tools
           of the agent use that value.
+
+          The default pins the agent to the home directory (Home Manager) or
+          `<stateDir>/workspace` (NixOS). Shell-cwd subcommands such as
+          `hermes skills trust|untrust` resolve from the shell instead, but
+          the terminal and file tools start here — set an explicit directory
+          for day-to-day agent work.
         '';
       };
 
