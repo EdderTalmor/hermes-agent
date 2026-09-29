@@ -565,7 +565,17 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         if returncode is None:
             return None
         # getattr-with-default: tests build the adapter via ``__new__`` without __init__.
-        if getattr(self, "_shutting_down", False) and returncode in {0, -2, -15}:
+        # Either flag marks an intentional exit. ``_shutting_down`` flips in disconnect(),
+        # but a supervisor's stop signal reaches the whole process group first: the bridge
+        # child dies with -15/-2 *before* disconnect() runs, while the runner's signal
+        # handler has already flipped ``_stop_requested_by_signal`` (#127047). Consulting
+        # the runner flag covers that window without blanket-ignoring -15 — a bridge
+        # killed while the gateway keeps running stays a retryable fatal so the
+        # reconnect watcher revives it.
+        _runner_signal_stop = getattr(
+            getattr(self, "gateway_runner", None), "_stop_requested_by_signal", False
+        )
+        if (getattr(self, "_shutting_down", False) or _runner_signal_stop) and returncode in {0, -2, -15}:
             logger.info("[%s] Bridge exited during shutdown (code %d).", self.name, returncode)
             return None
         message = f"WhatsApp bridge process exited unexpectedly (code {returncode})."
