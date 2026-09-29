@@ -2057,7 +2057,7 @@ class GatewayTurnMixin:
 
         # The context prompt render is pinned per session, keyed by a hash of the renderer inputs, so
         # the system prompt cannot drift turn-over-turn; a miss (thread rename, /sethome) re-renders.
-        if event.internal and session_key:
+        if session_key and self._event_preserves_prompt_pins(event):
             await self._rehydrate_prompt_pins(session_key, session_entry.session_id)
         context_prompt = self._pinned_session_context_prompt(
             context, _redact_pii, session_key,
