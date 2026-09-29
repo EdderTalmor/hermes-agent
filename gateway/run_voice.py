@@ -119,7 +119,20 @@ class GatewayVoiceMixin:
             return
         try:
             from hermes_cli.config import load_config  # lazy: no gateway -> hermes_cli module dep
-            auto_tts_default = bool((load_config().get("voice") or {}).get("auto_tts", False))
+            owner = getattr(adapter, "_owner_profile", None)
+            if isinstance(owner, str) and owner:
+                # Multiplexed secondary: load_config() resolves against the launch
+                # profile's home, so an unscoped read inherits the default profile's
+                # voice.auto_tts while the secondary's own config.yaml is ignored
+                # (#127036). Scope the read to the owning profile; the default
+                # profile keeps the ambient read.
+                from hermes_cli.profiles import get_profile_dir
+                from gateway.run import _profile_runtime_scope  # lazy: mixin, no import cycle
+                with _profile_runtime_scope(get_profile_dir(owner), hydrate_secrets=False):
+                    voice_cfg = load_config().get("voice") or {}
+            else:
+                voice_cfg = load_config().get("voice") or {}
+            auto_tts_default = bool(voice_cfg.get("auto_tts", False))
         except Exception:
             auto_tts_default = False
         if hasattr(adapter, "_auto_tts_default"):

@@ -178,6 +178,54 @@ class TestVoiceModeProfileIsolation:
         assert bot2_ad._auto_tts_enabled_chats == {"2"}
 
 
+class TestSecondaryVoiceAutoTtsProfileScope:
+    """#127036: a multiplexed secondary adapter must read its OWN profile's
+    voice.auto_tts, not the launch (default) profile's."""
+
+    @staticmethod
+    def _adapter(owner):
+        a = MagicMock()
+        a.platform = Platform.DISCORD
+        a._owner_profile = owner
+        a._auto_tts_default = False
+        a._auto_tts_enabled_chats = set()
+        a._auto_tts_disabled_chats = set()
+        return a
+
+    @staticmethod
+    def _homes(tmp_path, monkeypatch, default_tts, secondary_tts):
+        root = tmp_path / "hms"
+        secondary = root / "profiles" / "secondary"
+        secondary.mkdir(parents=True)
+        (root / "config.yaml").write_text(
+            f"voice:\n  auto_tts: {default_tts}\n", encoding="utf-8")
+        (secondary / "config.yaml").write_text(
+            f"voice:\n  auto_tts: {secondary_tts}\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(root))
+        return root, secondary
+
+    def test_secondary_reads_own_auto_tts_true(self, tmp_path, monkeypatch):
+        self._homes(tmp_path, monkeypatch, "false", "true")
+        runner = _make_runner()
+        adapter = self._adapter("secondary")
+        runner._sync_voice_mode_state_to_adapter(adapter)
+        assert adapter._auto_tts_default is True
+
+    def test_secondary_reads_own_auto_tts_false(self, tmp_path, monkeypatch):
+        self._homes(tmp_path, monkeypatch, "true", "false")
+        runner = _make_runner()
+        adapter = self._adapter("secondary")
+        runner._sync_voice_mode_state_to_adapter(adapter)
+        assert adapter._auto_tts_default is False
+
+    def test_default_keeps_ambient_read(self, tmp_path, monkeypatch):
+        self._homes(tmp_path, monkeypatch, "true", "false")
+        runner = _make_runner()
+        adapter = self._adapter(None)
+        runner._sync_voice_mode_state_to_adapter(adapter)
+        assert adapter._auto_tts_default is True
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
