@@ -511,6 +511,12 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 return False
         if not self._preflight():
             return False
+        # disconnect() leaves _shutting_down True and reconnects reuse this same adapter
+        # object (run_adapters calls connect(is_reconnect=True) after the fatal-recovery
+        # disconnect). A new connect attempt means we intend to run again, so clear the flag
+        # here — otherwise every {0, -2, -15} bridge exit after the first reconnect is misread
+        # as an intentional shutdown exit and the platform silently stops reviving (#127047).
+        self._shutting_down = False
         bridge_path = Path(self._bridge_script)
         lock_acquired = False
         try:
