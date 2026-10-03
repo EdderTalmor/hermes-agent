@@ -52,7 +52,7 @@ provides_browser_providers:
 `__init__.py`:
 
 ```python
-from plugins.browser.my_backend.provider import MyBackendProvider
+from .provider import MyBackendProvider
 
 
 def register(ctx) -> None:
