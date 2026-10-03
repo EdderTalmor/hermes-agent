@@ -114,6 +114,7 @@ def _integrity(db_path: Path) -> str:
         conn.close()
 
 
+@pytest.mark.platforms("posix")
 @pytest.mark.parametrize("point", ("summarizer", "commit"))
 def test_kill9_mid_compaction_leaves_state_consistent_and_resumable(make_scenario, provider, tmp_path, point):
     server, dispatch = provider
