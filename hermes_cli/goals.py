@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
 from dataclasses import dataclass, field, asdict
@@ -21,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from hermes_cli._subprocess_compat import noninteractive_git_env
+from hermes_cli._subprocess_compat import bounded_probe_run, noninteractive_git_env
 from hermes_time import safe_strftime
 
 logger = logging.getLogger(__name__)
@@ -396,21 +395,24 @@ def _gate_workspace() -> Tuple[Optional[str], Optional[str]]:
 def run_gate(gate: GoalGate, *, cwd: Optional[str] = None) -> Tuple[bool, int, str]:
     """Run one gate through the shell. Returns ``(passed, exit_code, output_tail)``; a timeout kills
     the process and counts as exit code -1."""
+    # Bounded, not subprocess.run: run()'s post-timeout cleanup calls an unbounded communicate()
+    # after killing the direct child (the shell), so a descendant holding duplicates of the
+    # captured pipes keeps them open and the gate waits past its timeout (#132325). The probe
+    # decodes utf-8/replace: operator-configured output is arbitrary bytes, and strict codepage
+    # decoding of one unmappable byte (emoji/CJK on a non-UTF-8 Windows console) kills the reader
+    # thread, leaving the tail the agent needs empty.
+    argv = ["cmd", "/c", gate.command] if os.name == "nt" else ["/bin/sh", "-c", gate.command]
     try:
-        # utf-8/replace: operator-configured output is arbitrary bytes; strict codepage decoding of
-        # one unmappable byte (emoji/CJK on a non-UTF-8 Windows console) kills the reader thread and
-        # the tail the agent needs arrives empty.
-        proc = subprocess.run(
-            gate.command, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=max(1, int(gate.timeout_seconds)), cwd=cwd or None,
+        proc = bounded_probe_run(
+            argv, timeout=max(1, int(gate.timeout_seconds)), cwd=cwd or None,
+            raise_on_spawn_failure=True,
         )
-        combined = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
-        return proc.returncode == 0, proc.returncode, combined[-_GATE_OUTPUT_TAIL_CHARS:]
-    except subprocess.TimeoutExpired as exc:
-        out = "".join(c if isinstance(c, str) else c.decode("utf-8", "replace") for c in (exc.stdout, exc.stderr) if c)
-        return False, -1, (out + f"\n[gate timed out after {gate.timeout_seconds}s]")[-_GATE_OUTPUT_TAIL_CHARS:]
     except Exception as exc:
         return False, -1, f"[gate could not run: {type(exc).__name__}: {exc}]"
+    if proc is None:
+        return False, -1, f"[gate timed out after {gate.timeout_seconds}s]"[-_GATE_OUTPUT_TAIL_CHARS:]
+    combined = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+    return proc.returncode == 0, proc.returncode, combined[-_GATE_OUTPUT_TAIL_CHARS:]
 
 
 # ── Goal state ────────────────────────────────────────────────────────
