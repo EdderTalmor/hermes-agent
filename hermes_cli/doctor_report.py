@@ -41,12 +41,15 @@ def _fail_and_issue(text: str, detail: str, fix: str, issues: list[str]) -> None
 
 
 @contextmanager
-def warn_on_error(text: str, detail: str = "({e})", report=check_warn):
-    """Best-effort block: an exception prints ``report(text.format(e=e), detail.format(e=e))`` (nothing when
-    *text* is ``""``) instead of propagating. ``{e}`` in either string is the exception."""
+def warn_on_error(text: str, detail: str = "({e})", report=check_warn, errors: list | None = None):
+    """Best-effort block: an exception prints report(text) (nothing when text is empty) instead of
+    propagating, with {e} substituted by the exception. When errors is a list, the caught exception
+    is appended so callers can turn a swallowed crash into a finding instead of a silent pass."""
     try:
         yield
     except Exception as e:
+        if errors is not None:
+            errors.append(e)
         if text:
             report(text.format(e=e), detail.format(e=e))
 
@@ -69,8 +72,9 @@ def doctor_check(on_error: str | None = None, detail: str = ""):
     """Turn ``fn(should_fix, f: Finding)`` into a ``(should_fix) -> Finding`` doctor check.
 
     *on_error* None: exceptions propagate (as they always did for that check). Otherwise the check is
-    best-effort via :func:`warn_on_error` (``""`` = silent) and the partial Finding is still returned,
-    so issues recorded before the crash survive."""
+    best-effort via :func:`warn_on_error` (empty string = silent) and the partial Finding is still
+    returned, so issues recorded before the crash survive. A crash is also recorded as a manual
+    issue, so a check that raises can never look like a check that passed."""
     def deco(fn):
         @functools.wraps(fn)
         def check(should_fix: bool) -> Finding:
@@ -78,8 +82,11 @@ def doctor_check(on_error: str | None = None, detail: str = ""):
             if on_error is None:
                 fn(should_fix, f)
             else:
-                with warn_on_error(on_error, detail):
+                errors: list = []
+                with warn_on_error(on_error, detail, errors=errors):
                     fn(should_fix, f)
+                for e in errors:
+                    f.manual_issues.append(f"check {fn.__name__} did not complete ({e})")
             return f
         return check
     return deco

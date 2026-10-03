@@ -185,8 +185,11 @@ def run_doctor(args):
             _section(title)
         total.merge(check(should_fix))
     # Opt-in live probes run AFTER all static checks (`--live`: real network calls; bounded + read-only).
-    with warn_on_error(""):
+    live_errors: list = []
+    with warn_on_error("", errors=live_errors):
         from hermes_cli.doctor_live import maybe_run_live_checks
         maybe_run_live_checks(args, total.manual_issues)
+    for e in live_errors:
+        total.manual_issues.append(f"live checks did not complete ({e})")
     _print_summary(should_fix, total)
     return int(bool(total.issues or total.manual_issues))

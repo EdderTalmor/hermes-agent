@@ -51,3 +51,41 @@ main()
     )
     assert result.returncode == int(unresolved), result.stdout + result.stderr
     assert ("fixture unresolved problem" if unresolved else "All checks passed") in result.stdout
+
+
+def test_doctor_raising_check_counts_as_unresolved(monkeypatch, capsys):
+    """Regression for #132335: a decorated check that raises must fail the run, not print
+    "All checks passed!" with exit 0 — even when it recorded nothing before crashing."""
+    import hermes_cli.doctor as doctor
+    from hermes_cli.doctor_report import doctor_check
+    from hermes_cli.main import cmd_doctor
+
+    @doctor_check("boom check failed: {e}")
+    def boom(should_fix, f):
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(doctor, "DOCTOR_CHECKS", ((None, boom),))
+    result = cmd_doctor(SimpleNamespace(fix=False, ack=None, live=False))
+    output = capsys.readouterr().out
+    assert result == 1
+    assert "All checks passed" not in output
+    assert "did not complete" in output
+
+
+def test_doctor_raising_check_keeps_partial_findings(monkeypatch, capsys):
+    """Issues recorded before the crash survive alongside the crash finding."""
+    import hermes_cli.doctor as doctor
+    from hermes_cli.doctor_report import doctor_check
+    from hermes_cli.main import cmd_doctor
+
+    @doctor_check("partial check failed: {e}")
+    def partial(should_fix, f):
+        f.issues.append("recorded before the crash")
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(doctor, "DOCTOR_CHECKS", ((None, partial),))
+    result = cmd_doctor(SimpleNamespace(fix=False, ack=None, live=False))
+    output = capsys.readouterr().out
+    assert result == 1
+    assert "recorded before the crash" in output
+    assert "did not complete" in output
